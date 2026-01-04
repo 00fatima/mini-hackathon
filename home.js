@@ -2,6 +2,7 @@ import { supabase } from "./config.js";
 
 // DOM Elements
 let currentUser = null;
+let allPostsData = []; // Store all posts data
 
 // Check authentication and get user profile
 async function checkAuth() {
@@ -14,7 +15,6 @@ async function checkAuth() {
     
     currentUser = user;
     
-    // Get user's name from metadata or email
     let userName = user.user_metadata?.name || user.email?.split('@')[0] || 'User';
     document.getElementById('userEmail').textContent = userName;
     
@@ -83,26 +83,25 @@ document.getElementById('postForm').addEventListener('submit', async (e) => {
 
     let imageUrl = null;
 
-    // Upload image if exists
+    // Upload image
     if (imageFile) {
         try {
-            const fileName = ${currentUser.id}/${Date.now()}_${imageFile.name};
-            const { data, error } = await supabase.storage
+            const fileName = `${currentUser.id}/${Date.now()}_${imageFile.name}`;
+            const { error } = await supabase.storage
                 .from('post-images')
                 .upload(fileName, imageFile);
-            
+
             if (!error) {
-                const { data: urlData } = supabase.storage
+                const { data } = supabase.storage
                     .from('post-images')
                     .getPublicUrl(fileName);
-                imageUrl = urlData.publicUrl;
+                imageUrl = data.publicUrl;
             }
-        } catch (error) {
-            console.error('Image upload error:', error);
+        } catch (err) {
+            console.error(err);
         }
     }
 
-    // Prepare post data
     const postData = {
         user_id: currentUser.id,
         title,
@@ -114,14 +113,12 @@ document.getElementById('postForm').addEventListener('submit', async (e) => {
 
     let result;
     if (postId) {
-        // Update existing post
         result = await supabase
             .from('posts')
             .update(postData)
             .eq('id', postId)
             .eq('user_id', currentUser.id);
     } else {
-        // Create new post
         result = await supabase
             .from('posts')
             .insert([postData]);
@@ -140,219 +137,243 @@ document.getElementById('postForm').addEventListener('submit', async (e) => {
 });
 
 // Image Preview
-document.getElementById('postImage').addEventListener('change', function(e) {
+document.getElementById('postImage').addEventListener('change', function() {
     const preview = document.getElementById('imagePreview');
     preview.innerHTML = '';
-    
+
     if (this.files[0]) {
         const reader = new FileReader();
-        reader.onload = function(e) {
-            const img = document.createElement('img');
-            img.src = e.target.result;
-            preview.appendChild(img);
+        reader.onload = e => {
+            preview.innerHTML = `<img src="${e.target.result}">`;
         };
         reader.readAsDataURL(this.files[0]);
     }
 });
 
-// Load and Display Posts - NO LOADER VERSION
+// Truncate text to 4 lines
+function truncateText(text, maxLines = 4) {
+    const lines = text.split('\n');
+    if (lines.length <= maxLines) {
+        return text;
+    }
+    
+    const truncatedLines = lines.slice(0, maxLines);
+    return truncatedLines.join('\n') + '...';
+}
+
+// Load Posts
 async function loadPosts(category = 'all') {
     const postsGrid = document.getElementById('postsGrid');
-    
-    // Show empty state immediately
-    postsGrid.innerHTML = `
-        <div class="no-posts" id="emptyState">
-            <i class="fas fa-newspaper fa-3x"></i>
-            <h3>Loading posts...</h3>
-        </div>
-    `;
 
     let query = supabase
         .from('posts')
         .select('*')
         .order('created_at', { ascending: false });
 
-    if (category !== 'all') {
-        query = query.eq('category', category);
-    }
+    if (category !== 'all') query = query.eq('category', category);
 
     const { data: posts, error } = await query;
+    if (error) return console.error(error);
 
-    if (error) {
-        postsGrid.innerHTML = '<div class="error">Error loading posts. Please refresh.</div>';
-        console.error('Error:', error);
-        return;
-    }
+    // Store all posts data globally
+    allPostsData = posts;
+
+    postsGrid.innerHTML = '';
 
     if (posts.length === 0) {
         postsGrid.innerHTML = `
-            <div class="no-posts">
-                <i class="fas fa-newspaper fa-3x"></i>
+            <div class="no-posts" style="grid-column: 1 / -1;">
+                <i class="fas fa-newspaper"></i>
                 <h3>No posts yet</h3>
-                <p>Be the first to create a post!</p>
-                <button id="createFirstPost" class="btn btn-primary" style="margin-top: 1rem;">
-                    <i class="fas fa-plus"></i> Create Your First Post
-                </button>
+                <p>Be the first to share your thoughts!</p>
             </div>
         `;
-        
-        // Add event listener for the create button
-        document.getElementById('createFirstPost')?.addEventListener('click', () => {
-            document.getElementById('createPostBtn').click();
-        });
-        
         return;
     }
 
-    postsGrid.innerHTML = '';
     posts.forEach(post => {
-        const isCurrentUser = currentUser && post.user_id === currentUser.id;
-        
-        // Get the actual username from post data or current user
-        const userName = post.user_name || 
-                        (post.user_id === currentUser?.id ? 
-                         (currentUser.user_metadata?.name || currentUser.email?.split('@')[0]) : 
-                         'User');
-        
-        const postCard = document.createElement('div');
-        postCard.className = 'post-card';
-        postCard.innerHTML = `
-            ${post.image_url ? `
-                <img src="${post.image_url}" alt="${post.title}" class="post-image">
-            ` : ''}
-            <div class="post-content">
-                <span class="post-category">${post.category}</span>
-                <h3 class="post-title">${post.title}</h3>
-                <p class="post-text">${post.content}</p>
-                <div class="post-footer">
-                    <span class="post-author">
-                        <i class="fas fa-user"></i> 
-                        ${userName}
-                        ${isCurrentUser ? ' (You)' : ''}
-                    </span>
-                    <span class="post-time">
-                        <i class="far fa-clock"></i> 
-                        ${formatDate(post.created_at)}
-                    </span>
-                    <div class="post-actions">
-                        ${isCurrentUser ? `
-                            <button class="btn btn-secondary edit-post" data-id="${post.id}">
-                                <i class="fas fa-edit"></i> Edit
+        const isCurrentUser = post.user_id === currentUser?.id;
+        const userName = post.user_name || 'User';
+        const truncatedContent = truncateText(post.content, 4);
+        const isTruncated = post.content.split('\n').length > 4 || post.content.length > 200;
+
+        postsGrid.innerHTML += `
+            <div class="post-card" data-post-id="${post.id}">
+                ${post.image_url ? `<img src="${post.image_url}" class="post-image">` : ''}
+                <div class="post-content">
+                    <span class="post-category">${post.category}</span>
+                    <h3 class="post-title">${post.title}</h3>
+                    <div class="post-text-container">
+                        <p class="post-text">${truncatedContent}</p>
+                        ${isTruncated ? `
+                            <button class="read-more-btn" data-post-id="${post.id}">
+                                Read More
                             </button>
+                        ` : ''}
+                    </div>
+                    <div class="post-footer">
+                        <div class="post-author">
+                            <span class="user-name">@${userName}</span>
+                            <span class="post-time">${formatDate(post.created_at)}</span>
+                        </div>
+                        ${isCurrentUser ? `
+                            <div class="post-actions">
+                                <button class="btn-edit" data-post-id="${post.id}">
+                                    <i class="fas fa-edit"></i> Edit
+                                </button>
+                            </div>
                         ` : ''}
                     </div>
                 </div>
             </div>
         `;
-        postsGrid.appendChild(postCard);
     });
 
-    // Add edit event listeners
-    document.querySelectorAll('.edit-post').forEach(button => {
-        button.addEventListener('click', async (e) => {
-            const postId = e.target.closest('button').dataset.id;
-            await loadPostForEdit(postId);
+    // Add event listeners for Read More buttons
+    document.querySelectorAll('.read-more-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const postId = btn.dataset.postId;
+            showFullPost(postId);
+        });
+    });
+
+    // Add event listeners for Edit buttons
+    document.querySelectorAll('.btn-edit').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const postId = btn.dataset.postId;
+            loadPostForEdit(postId);
+        });
+    });
+
+    // Make entire post card clickable
+    document.querySelectorAll('.post-card').forEach(card => {
+        card.addEventListener('click', (e) => {
+            // Don't trigger if clicking on buttons inside
+            if (e.target.closest('button')) return;
+            
+            const postId = card.dataset.postId;
+            showFullPost(postId);
         });
     });
 }
 
-// Format date function
-function formatDate(dateString) {
-    const date = new Date(dateString);
-    const now = new Date();
-    const diffMs = now - date;
-    const diffMins = Math.floor(diffMs / (1000 * 60));
-    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+// Show full post modal
+function showFullPost(postId) {
+    const post = allPostsData.find(p => p.id === postId);
+    if (!post) return;
+
+    const fullPostModal = document.createElement('div');
+    fullPostModal.className = 'modal';
+    fullPostModal.id = 'fullPostModal';
+    fullPostModal.style.display = 'flex';
     
-    if (diffMins < 60) {
-        return ${diffMins}m ago;
-    } else if (diffHours < 24) {
-        return ${diffHours}h ago;
-    } else if (diffDays < 7) {
-        return ${diffDays}d ago;
-    } else {
-        return date.toLocaleDateString();
-    }
+    const userName = post.user_name || 'User';
+    
+    fullPostModal.innerHTML = `
+        <div class="modal-content" style="max-width: 700px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="color: #00e6e6; margin: 0;">${post.title}</h2>
+                <button onclick="document.getElementById('fullPostModal').remove()" 
+                        style="background: none; border: none; color: #00e6e6; font-size: 24px; cursor: pointer;">
+                    ×
+                </button>
+            </div>
+            
+            ${post.image_url ? `
+                <img src="${post.image_url}" style="width: 100%; max-height: 400px; object-fit: cover; border-radius: 10px; margin-bottom: 20px; border: 2px solid #00e6e6;">
+            ` : ''}
+            
+            <div style="margin-bottom: 20px; display: flex; gap: 15px; align-items: center;">
+                <span class="post-category" style="display: inline-block;">${post.category}</span>
+                <span style="color: #00e6e6; font-weight: 600;">@${userName}</span>
+                <span style="color: #aaa;">${formatDate(post.created_at)}</span>
+            </div>
+            
+            <div class="full-post-content" style="
+                padding: 20px;
+                background: rgba(255,255,255,0.05);
+                border-radius: 10px;
+                border: 1px solid rgba(0,230,230,0.3);
+                max-height: 400px;
+                overflow-y: auto;
+                line-height: 1.6;
+                color: #ddd;
+                white-space: pre-wrap;
+            ">
+                ${post.content}
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(fullPostModal);
+    
+    // Close modal when clicking outside
+    fullPostModal.addEventListener('click', (e) => {
+        if (e.target === fullPostModal) {
+            fullPostModal.remove();
+        }
+    });
 }
 
-// Load post for editing
+// Date format
+function formatDate(dateString) {
+    const diff = Date.now() - new Date(dateString);
+    const mins = Math.floor(diff / 60000);
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `${hrs}h ago`;
+    const days = Math.floor(hrs / 24);
+    return `${days}d ago`;
+}
+
+// Load post for edit
 async function loadPostForEdit(postId) {
-    const { data: post, error } = await supabase
+    const { data: post } = await supabase
         .from('posts')
         .select('*')
         .eq('id', postId)
         .single();
 
-    if (!error && post) {
-        document.getElementById('postId').value = post.id;
-        document.getElementById('postTitle').value = post.title;
-        document.getElementById('postCategory').value = post.category;
-        document.getElementById('postContent').value = post.content;
-        
-        const preview = document.getElementById('imagePreview');
-        if (post.image_url) {
-            preview.innerHTML = <img src="${post.image_url}" alt="Current image">;
-        } else {
-            preview.innerHTML = '';
-        }
+    if (!post) return;
 
-        document.getElementById('modalTitle').textContent = 'Edit Post';
-        document.getElementById('submitBtnText').textContent = 'Update Post';
-        document.getElementById('deletePostBtn').style.display = 'block';
-        document.getElementById('postModal').style.display = 'flex';
-    }
+    document.getElementById('postId').value = post.id;
+    document.getElementById('postTitle').value = post.title;
+    document.getElementById('postCategory').value = post.category;
+    document.getElementById('postContent').value = post.content;
+    document.getElementById('imagePreview').innerHTML = post.image_url
+        ? `<img src="${post.image_url}">`
+        : '';
+
+    document.getElementById('modalTitle').textContent = 'Edit Post';
+    document.getElementById('submitBtnText').textContent = 'Update Post';
+    document.getElementById('deletePostBtn').style.display = 'block';
+    document.getElementById('postModal').style.display = 'flex';
 }
 
-// Setup category filtering
-function setupCategoryFilter() {
-    const categories = ['all', 'Technology', 'Lifestyle', 'Food', 'Travel', 'Education'];
-    const container = document.getElementById('categoryTabs');
-    
-    categories.forEach(category => {
-        const tab = document.createElement('div');
-        tab.className = category-tab ${category === 'all' ? 'active' : ''};
-        tab.textContent = category === 'all' ? 'All Posts' : category;
-        tab.dataset.category = category;
+// Category navigation
+document.querySelectorAll('.nav-link').forEach(link => {
+    link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const category = link.dataset.category;
         
-        tab.addEventListener('click', () => {
-            document.querySelectorAll('.category-tab').forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            loadPosts(category);
-        });
+        // Update active state
+        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        link.classList.add('active');
         
-        container.appendChild(tab);
+        // Load posts for category
+        loadPosts(category);
     });
+});
 
-    // Also handle nav links
-    document.querySelectorAll('.nav-link').forEach(link => {
-        link.addEventListener('click', (e) => {
-            e.preventDefault();
-            const category = link.dataset.category;
-            document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
-            link.classList.add('active');
-            loadPosts(category);
-        });
-    });
-}
-
-// Initialize
-async function init() {
+// Init
+(async function init() {
     await checkAuth();
-    setupCategoryFilter();
     loadPosts();
 
-    // Setup real-time updates
     supabase
         .channel('posts-channel')
-        .on('postgres_changes', 
-            { event: '*', schema: 'public', table: 'posts' }, 
-            () => {
-                loadPosts();
-            }
-        )
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'posts' }, loadPosts)
         .subscribe();
-}
-
-// Start the app
-init();
+})();

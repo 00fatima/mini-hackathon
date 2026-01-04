@@ -34,6 +34,10 @@ loginForm.addEventListener("submit", async (e) => {
     messageDiv.style.color = "red";
   } else {
     messageDiv.textContent = "Login Successful!";
+      const loginBtn = document.getElementById('loginBtn');
+  loginBtn.addEventListener('click', () => {
+    window.location.href = 'home.html';
+  }); 
     messageDiv.style.color = "lightgreen";
 
     
